@@ -1,4 +1,4 @@
-Design Specification: tpt-mesh v0.2 (Multi-App Ecosystem)
+Design Specification: tpt-family-mesh v0.2 (Multi-App Ecosystem)
 Author: TPT Solutions
 Date: November 27, 2026
 License Constraint: STRICTLY MIT, BSD-3, Zlib, or ISC for all inbound dependencies. Dual-licensed crates (MIT OR Apache-2.0) must be explicitly resolved to their MIT license clause via Cargo configuration. Zero Apache-2.0 inbound dependencies permitted. Outbound release remains standard Rust dual-license (MIT OR Apache-2.0).
@@ -21,7 +21,7 @@ Yjs-Native Transport: The mesh must be optimized for transporting binary Yjs CRD
        ├─> [ Yjs CRDT Engine (MIT) ]
        │     └─ Generates binary update deltas
        │
-       ├─> [ tpt-mesh-wasm (Rust -> Wasm) ]
+       ├─> [ tpt-family-mesh-wasm (Rust -> Wasm) ]
        │     ├─ Channel Multiplexer (10 logical channels)
        │     ├─ Blob Chunker / Streamer
        │     ├─ Application-Layer E2EE (for vault)
@@ -34,7 +34,7 @@ Yjs-Native Transport: The mesh must be optimized for transporting binary Yjs CRD
              ├─ Hub Mode: WebSocket to tpt-cortex
              └─ P2P Mode: Magic Link SDP exchange
 3. Protocol: Multi-Channel Multiplexing
-Instead of opening a new WebRTC Data Channel for each app (which is expensive and limited by browsers to ~16-256 channels), tpt-mesh uses a single Data Channel with logical sub-channels.
+Instead of opening a new WebRTC Data Channel for each app (which is expensive and limited by browsers to ~16-256 channels), tpt-family-mesh uses a single Data Channel with logical sub-channels.
 3.1 Channel Map
 Channel ID
 Priority
@@ -90,10 +90,10 @@ This allows the Wasm demuxer to instantly route incoming frames to the correct m
 Photos cannot be sent as a single massive packet. They must be chunked and streamed without blocking chat messages.
 4.1 Chunking Strategy
 Alice selects a 5MB photo in tpt-album.
-tpt-mesh-wasm splits it into 64KB chunks (≈78 chunks).
+tpt-family-mesh-wasm splits it into 64KB chunks (≈78 chunks).
 Each chunk is assigned a blob_id (UUID) and a chunk_index.
 Chunks are sent over channels 6-15 using unordered, unreliable delivery (like UDP).
-Bob's tpt-mesh-wasm receives chunks, tracks missing indices via a bitmap, and requests retransmission only for missing chunks.
+Bob's tpt-family-mesh-wasm receives chunks, tracks missing indices via a bitmap, and requests retransmission only for missing chunks.
 Once all chunks arrive, they are reassembled into the original blob and handed to tpt-album.
 4.2 Flow Control
 To prevent the blob stream from choking the chat channel, the multiplexer implements weighted fair queuing:
@@ -110,14 +110,14 @@ This key is held only in the Wasm module's memory. It is never written to disk.
 Alice types a Wi-Fi password into tpt-vault.
 The PWA encrypts the payload using XChaCha20-Poly1305 (via ring or chacha20poly1305 crate, both MIT/ISC).
 The ciphertext is written to the Yjs CRDT as an opaque blob.
-The ciphertext flows through tpt-mesh to Bob.
-Bob's tpt-mesh delivers it to his tpt-vault app.
+The ciphertext flows through tpt-family-mesh to Bob.
+Bob's tpt-family-mesh delivers it to his tpt-vault app.
 Bob's PWA decrypts it using his locally-derived Argon2 key.
 Critical Property: Even if Alice's phone is seized and her IndexedDB is extracted, the vault data is mathematically unreadable without the family passphrase.
 6. Protocol: Yjs Update Transport
 Yjs generates binary "updates" (deltas) whenever state changes. These are highly optimized but need special handling in the mesh.
 6.1 Update Batching
-Instead of sending a Yjs update immediately on every keystroke (which would spam the network), tpt-mesh-wasm batches updates:
+Instead of sending a Yjs update immediately on every keystroke (which would spam the network), tpt-family-mesh-wasm batches updates:
 For tpt-lists (high interactivity): Flush every 50ms.
 For tpt-calendar: Flush every 500ms.
 For tpt-chat: Flush immediately (append-only, low volume).
@@ -137,7 +137,7 @@ The user copies this URL and sends it via SMS/WhatsApp.
 The receiving peer opens the URL, generates an SDP Answer, and replies with a similar URL.
 Once both sides have exchanged SDPs, the browser's native WebRTC engine establishes the connection.
 8. Strict Dependency Audit (Updated)
-# tpt-mesh-wasm Cargo.toml
+# tpt-family-mesh-wasm Cargo.toml
 
 [dependencies]
 # Cryptography: Noise XX + Argon2 + XChaCha20

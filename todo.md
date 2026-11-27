@@ -1,4 +1,4 @@
-# tpt-mesh: Project Todo
+# tpt-family-mesh: Project Todo
 
 Source: spec.txt (v0.2). Owner: TPT Solutions. Solo developer, no dates.
 
@@ -20,7 +20,7 @@ Source: spec.txt (v0.2). Owner: TPT Solutions. Solo developer, no dates.
 
 - [ ] Channel count: spec says "10 logical channels" in one place and "16" in another. Use 16 (ids 0-15)
 - [ ] Remove pako-sys (C zlib binding). Use pako (JS, MIT) in the PWA or flate2 in Rust (select MIT)
-- [ ] Remove webrtc-rs from tpt-mesh-wasm. It is native-only (moves to tpt-cortex)
+- [ ] Remove webrtc-rs from tpt-family-mesh-wasm. It is native-only (moves to tpt-cortex)
 - [ ] Correct "MIT licensed" claims for argon2 and chacha20poly1305 (both are MIT OR Apache-2.0; select MIT)
 - [ ] Assign a channel for Yjs state-vector exchange (the channel map does not include it)
 - [ ] Fix the 64KB frame / u16 mismatch in the spec text (now 60KB)
@@ -47,8 +47,8 @@ Source: spec.txt (v0.2). Owner: TPT Solutions. Solo developer, no dates.
 ## Phase 1: Foundations and Tooling
 
 - [ ] Create the repo structure:
-  - [ ] `tpt-mesh-core` (pure Rust framing, mux, scheduler, crypto. Testable on native)
-  - [ ] `tpt-mesh-wasm` (wasm-bindgen wrapper around the core)
+  - [ ] `tpt-family-mesh-core` (pure Rust framing, mux, scheduler, crypto. Testable on native)
+  - [ ] `tpt-family-mesh-wasm` (wasm-bindgen wrapper around the core)
   - [ ] `tpt-cortex` (standalone signaling and TURN service)
   - [ ] `tpt-family-hub` (Svelte/TS PWA shell)
   - [ ] `apps/` (tpt-chat, tpt-lists, tpt-calendar, tpt-album, tpt-vault)
@@ -80,7 +80,7 @@ Source: spec.txt (v0.2). Owner: TPT Solutions. Solo developer, no dates.
 
 ## Phase 3: Transport and Signaling (Spec Section 7)
 
-### Browser transport (tpt-mesh-wasm, web-sys)
+### Browser transport (tpt-family-mesh-wasm, web-sys)
 
 - [ ] Wrap browser RTCPeerConnection via web-sys (no webrtc-rs in the wasm build)
 - [ ] Open a single RTCDataChannel and multiplex all channels over it
@@ -259,7 +259,7 @@ Source: spec.txt (v0.2). Owner: TPT Solutions. Solo developer, no dates.
 ## Phase 12: Release
 
 - [ ] Final license check: cargo-deny passes, no Apache-only deps, dual deps resolved to MIT
-- [ ] Publish tpt-mesh-core and tpt-mesh-wasm (crates.io or npm, decide which)
+- [ ] Publish tpt-family-mesh-core and tpt-family-mesh-wasm (crates.io or npm, decide which)
 - [ ] Tag version 0.2.0 and write release notes
 - [ ] Publish the PWA build and tpt-cortex release artifacts
 - [ ] Install and setup guide for family members (Hub Mode and P2P Mode)
