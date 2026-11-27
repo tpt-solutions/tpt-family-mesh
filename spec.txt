@@ -1,0 +1,215 @@
+Design Specification: tpt-mesh v0.2 (Multi-App Ecosystem)
+Author: TPT Solutions
+Date: November 27, 2026
+License Constraint: STRICTLY MIT, BSD-3, Zlib, or ISC for all inbound dependencies. Dual-licensed crates (MIT OR Apache-2.0) must be explicitly resolved to their MIT license clause via Cargo configuration. Zero Apache-2.0 inbound dependencies permitted. Outbound release remains standard Rust dual-license (MIT OR Apache-2.0).
+1. Vision & Core Principles (Updated)
+Multi-App Multiplexing: A single mesh connection must serve all five micro-apps (tpt-chat, tpt-lists, tpt-calendar, tpt-album, tpt-vault) simultaneously without head-of-line blocking.
+Application-Layer E2EE: The transport layer (Noise XX) provides peer authentication, but the tpt-vault requires an additional encryption layer derived from a shared family passphrase, ensuring even the mesh peers cannot read vault data without the passphrase.
+Efficient Blob Streaming: The tpt-album app requires streaming multi-megabyte photos over the mesh without blocking the lightweight chat/list traffic.
+Dual-Mode Signaling: Must natively support both Hub Mode (WebSocket signaling via tpt-cortex) and P2P Mode (Magic Link SDP exchange via external apps).
+Yjs-Native Transport: The mesh must be optimized for transporting binary Yjs CRDT updates, which are the backbone of all micro-app state.
+2. High-Level Architecture (Updated)
+[ tpt-family-hub PWA (Svelte/TS) ]
+       │
+       ├─> [ Micro-App Layer ]
+       │     ├─ tpt-chat     (append-only log)
+       │     ├─ tpt-lists    (live CRDT, presence)
+       │     ├─ tpt-calendar (event state)
+       │     ├─ tpt-album    (blob streaming)
+       │     └─ tpt-vault    (E2EE encrypted payloads)
+       │
+       ├─> [ Yjs CRDT Engine (MIT) ]
+       │     └─ Generates binary update deltas
+       │
+       ├─> [ tpt-mesh-wasm (Rust -> Wasm) ]
+       │     ├─ Channel Multiplexer (10 logical channels)
+       │     ├─ Blob Chunker / Streamer
+       │     ├─ Application-Layer E2EE (for vault)
+       │     └─ Yjs Update Transport Optimizer
+       │
+       ├─> [ Browser Native RTCPeerConnection ]
+       │     └─ Handles raw UDP via web-sys bindings
+       │
+       └─> [ Signaling Adapter ]
+             ├─ Hub Mode: WebSocket to tpt-cortex
+             └─ P2P Mode: Magic Link SDP exchange
+3. Protocol: Multi-Channel Multiplexing
+Instead of opening a new WebRTC Data Channel for each app (which is expensive and limited by browsers to ~16-256 channels), tpt-mesh uses a single Data Channel with logical sub-channels.
+3.1 Channel Map
+Channel ID
+Priority
+App
+Data Type
+Notes
+0
+CRITICAL
+System
+Heartbeats, Presence
+Unreliable, unordered
+1
+HIGH
+tpt-chat
+Text messages
+Reliable, ordered
+2
+HIGH
+tpt-vault
+E2EE payloads
+Reliable, ordered
+3
+MEDIUM
+tpt-lists
+Yjs updates
+Reliable, ordered
+4
+MEDIUM
+tpt-calendar
+Yjs updates
+Reliable, ordered
+5
+LOW
+tpt-album
+Metadata (thumbnails, keys)
+Reliable, ordered
+6-15
+LOW
+tpt-album
+Blob chunks (photos)
+Unreliable, resumable
+3.2 Frame Format
+Every packet on the wire is wrapped in a minimal header:
+
+struct MeshFrame {
+    channel_id: u8,       // 0-15
+    sequence: u32,        // For ordering within channel
+    payload_length: u16,  // Max 64KB per frame
+    payload: [u8],        // The actual data
+}
+This allows the Wasm demuxer to instantly route incoming frames to the correct micro-app without parsing the payload.
+4. Protocol: Blob Streaming (tpt-album)
+Photos cannot be sent as a single massive packet. They must be chunked and streamed without blocking chat messages.
+4.1 Chunking Strategy
+Alice selects a 5MB photo in tpt-album.
+tpt-mesh-wasm splits it into 64KB chunks (≈78 chunks).
+Each chunk is assigned a blob_id (UUID) and a chunk_index.
+Chunks are sent over channels 6-15 using unordered, unreliable delivery (like UDP).
+Bob's tpt-mesh-wasm receives chunks, tracks missing indices via a bitmap, and requests retransmission only for missing chunks.
+Once all chunks arrive, they are reassembled into the original blob and handed to tpt-album.
+4.2 Flow Control
+To prevent the blob stream from choking the chat channel, the multiplexer implements weighted fair queuing:
+Channels 0-2 (System, Chat, Vault) get 60% of bandwidth.
+Channels 3-4 (Lists, Calendar) get 30%.
+Channels 5-15 (Album) get 10%, but can burst to 100% when the other channels are idle.
+5. Protocol: Application-Layer E2EE (tpt-vault)
+The Noise XX transport already encrypts traffic between peers. But for tpt-vault, we need an additional layer so that the data remains encrypted at rest in IndexedDB and in any future cloud backup.
+5.1 Key Derivation
+The family agrees on a passphrase (e.g., "GrandmasRecipe2026!").
+Each peer derives a 256-bit key using Argon2id (via argon2 crate, MIT licensed) with a fixed salt: sha256("tpt-family-hub-vault-v1").
+This key is held only in the Wasm module's memory. It is never written to disk.
+5.2 Encryption Flow
+Alice types a Wi-Fi password into tpt-vault.
+The PWA encrypts the payload using XChaCha20-Poly1305 (via ring or chacha20poly1305 crate, both MIT/ISC).
+The ciphertext is written to the Yjs CRDT as an opaque blob.
+The ciphertext flows through tpt-mesh to Bob.
+Bob's tpt-mesh delivers it to his tpt-vault app.
+Bob's PWA decrypts it using his locally-derived Argon2 key.
+Critical Property: Even if Alice's phone is seized and her IndexedDB is extracted, the vault data is mathematically unreadable without the family passphrase.
+6. Protocol: Yjs Update Transport
+Yjs generates binary "updates" (deltas) whenever state changes. These are highly optimized but need special handling in the mesh.
+6.1 Update Batching
+Instead of sending a Yjs update immediately on every keystroke (which would spam the network), tpt-mesh-wasm batches updates:
+For tpt-lists (high interactivity): Flush every 50ms.
+For tpt-calendar: Flush every 500ms.
+For tpt-chat: Flush immediately (append-only, low volume).
+6.2 State Vector Sync
+When two peers connect, they don't send the entire database. They exchange Yjs State Vectors (a compact summary of what they have), and then only transmit the missing updates. This makes the initial sync of a large family history take seconds, not minutes.
+7. Dual-Mode Signaling Adapter (Updated)
+7.1 Hub Mode (via tpt-cortex)
+The PWA opens a WebSocket to ws://[home-assistant-ip]:9911/mesh.
+It sends its peer_id and receives a list of online peers.
+WebRTC ICE candidates are exchanged via JSON messages over this WebSocket.
+The server also acts as a TURN relay if direct P2P fails.
+7.2 P2P Mode (Magic Link)
+The PWA generates a WebRTC SDP Offer.
+It compresses the SDP using pako (MIT licensed zlib implementation) and encodes it as URL-safe Base64.
+The resulting string is embedded in a URL: https://hub.tpt/#join=<base64>.
+The user copies this URL and sends it via SMS/WhatsApp.
+The receiving peer opens the URL, generates an SDP Answer, and replies with a similar URL.
+Once both sides have exchanged SDPs, the browser's native WebRTC engine establishes the connection.
+8. Strict Dependency Audit (Updated)
+# tpt-mesh-wasm Cargo.toml
+
+[dependencies]
+# Cryptography: Noise XX + Argon2 + XChaCha20
+snow = { version = "0.9", default-features = false, features = ["ring"] } # ring is ISC
+argon2 = "0.5"        # MIT licensed
+chacha20poly1305 = "0.10" # MIT/Apache dual - MUST select MIT via features
+
+# Compression (for Magic Link SDP)
+pako-sys = "0.3"      # MIT (Wasm bindings for pako)
+
+# WebRTC
+webrtc = "0.9"        # MIT (webrtc-rs)
+
+# Serialization
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = "1.0"
+postcard = { version = "1.0", features = ["alloc"] } # MIT - for efficient binary frames
+
+# Wasm
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "RtcPeerConnection", "RtcDataChannel", "RtcSessionDescription",
+    "WebSocket", "Window", "Crypto", "SubtleCrypto"
+]}
+
+# Yjs interop (optional, for native Rust peers)
+# yrs = "0.18"        # MIT - if we want Rust peers to understand Yjs natively
+
+[package.metadata.deny]
+allowed-licenses = ["MIT", "BSD-3-Clause", "Zlib", "ISC", "Unlicense"]
+forbidden-licenses = ["Apache-2.0 (standalone)", "GPL-3.0", "AGPL-3.0", "MPL-2.0"]
+9. Phase 1 Milestones (Updated)
+Milestone 1: Core Multiplexer & Framing (Week 1-2)
+Implement the MeshFrame binary format.
+Build the channel demuxer in Wasm.
+Verify that chat messages (channel 1) and list updates (channel 3) can flow simultaneously without blocking.
+Milestone 2: Yjs Transport & State Vector Sync (Week 3)
+Integrate yrs (MIT) or JS-side Yjs with the mesh.
+Implement update batching (50ms/500ms flush).
+Verify that two peers can sync a large Yjs document in <5 seconds using state vectors.
+Milestone 3: Blob Streaming for tpt-album (Week 4)
+Implement the chunker/streamer for channels 6-15.
+Build the missing-chunk bitmap and retransmission logic.
+Verify that a 5MB photo can be streamed P2P without blocking a concurrent chat conversation.
+Milestone 4: Application-Layer E2EE for tpt-vault (Week 5)
+Implement Argon2id key derivation in Wasm.
+Implement XChaCha20-Poly1305 encryption/decryption.
+Verify that vault data written to IndexedDB is ciphertext, and only decrypts with the correct passphrase.
+Milestone 5: Dual-Mode Signaling (Week 6)
+Implement the WebSocket signaling adapter for Hub Mode.
+Implement the Magic Link SDP encoder/decoder for P2P Mode.
+Verify that the PWA can seamlessly switch between modes based on environment detection.
+Summary of v0.2 Changes
+Feature
+v0.1
+v0.2
+Channels
+Single stream
+16 logical channels with priority queuing
+Blob handling
+Not specified
+Chunked streaming with retransmission
+Encryption
+Transport only (Noise XX)
+Transport + Application-layer (Argon2 + XChaCha20)
+CRDT support
+Generic
+Yjs-optimized with batching and state vectors
+Signaling
+WebSocket only
+Dual-mode: WebSocket + Magic Link
+E2EE Vault
+Not specified
+Passphrase-derived, at-rest encryption
+
